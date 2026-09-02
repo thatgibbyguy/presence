@@ -78,7 +78,9 @@ All state in `storage.local` under one key per collection. Schema version at `me
 
 ```js
 // visits (rolling, main_frame only, prune > 48h on startup and daily)
-[{ ts, domain, reflex: true|false }]     // domain = registrable domain. No URLs here.
+[{ ts, domain, host, reflex: true|false, root: true|false }]
+// domain = registrable domain; host = exact hostname (needed for scoped ignores);
+// root = path was "/" or empty. No full URLs here.
 
 // detector config
 {
@@ -90,8 +92,10 @@ All state in `storage.local` under one key per collection. Schema version at `me
 // watched (domains that tripped today; cleared at local midnight)
 [{ domain: "reddit.com", trippedAt, count, lastAnswer: "yes"|"no"|"notToday"|null }]
 
-// ignored (domains the user said are work; detection skips them)
-[{ domain: "atlassian.net", until }]     // until = epoch ms, default now + 30 days
+// ignored (hosts or domains the user said are work; detection skips them)
+[{ match: "atlassian.net" | "ads.reddit.com", scope: "domain" | "host", until }]
+// until = epoch ms, default now + 30 days. scope "domain" matches the registrable
+// domain and all subdomains; scope "host" matches that exact hostname only.
 
 // lists
 {
@@ -149,13 +153,13 @@ This is the core of phase 1. Build and test it before lists or sessions.
 **Observing.** Listen to `webNavigation.onCommitted` filtered to `frameId === 0`. For each event:
 
 1. `domain = registrableDomain(new URL(details.url).hostname)`. Skip if `null`, if the URL scheme isn't http(s), or if the URL is our own extension page.
-2. Skip if `domain` is in `ignored` with `until > now`.
-3. `reflex = isReflex(details, previousUrlForTab)` where reflex is true when `transitionType ∈ {"typed", "generated", "auto_bookmark", "keyword"}` **or** the tab's previous URL was a new-tab page (`chrome://newtab/`, `about:newtab`, `about:home`, `about:blank`) or the tab had no previous URL (freshly opened). Track the previous URL per tab in memory in the background; it does not need to survive a service worker restart.
-4. Append `{ ts, domain, reflex }` to `visits`.
+2. Skip if an `ignored` entry with `until > now` matches: scope `domain` matches when `entry.match === domain`; scope `host` matches when `entry.match === hostname`.
+3. `reflex = isReflex(details, previousUrlForTab)` where reflex is true when `transitionType ∈ {"typed", "generated", "auto_bookmark", "keyword"}` **or** the tab's previous URL was a new-tab page (`chrome://newtab/`, `about:newtab`, `about:home`, `about:blank`) or the tab had no previous URL (freshly opened). Track the previous URL per tab in memory in the background; it does not need to survive a service worker restart. `root = (url.pathname === "/" || url.pathname === "") && !url.search`.
+4. Append `{ ts, domain, host: hostname, reflex, root }` to `visits`.
 5. If `domain` is already `watched` → interrupt (see below).
 6. Else `trip = detect(visits, domain, now, config)`. If `trip` → add to `watched`, then interrupt.
 
-**`detect(visits, domain, now, config)`** is pure. Returns `null` or `{ domain, count, reflexCount, firstTs, windowMinutes }`. Counts visits to `domain` with `ts > now - windowMinutes*60_000`. Trips when `reflexCount >= reflexThreshold` or `count >= anyThreshold`. The visit that just happened is included in the count.
+**`detect(visits, domain, now, config)`** is pure. Returns `null` or `{ domain, count, reflexCount, rootCount, firstTs, windowMinutes, trippedBy: "reflex" | "any", toolShaped: bool }`. Counts visits to `domain` with `ts > now - windowMinutes*60_000`. Trips when `reflexCount >= reflexThreshold` (`trippedBy: "reflex"`) or `count >= anyThreshold` (`trippedBy: "any"`). `toolShaped` is true when `trippedBy === "any"` and `reflexCount * 2 < count` (a majority of arrivals were links, notifications, or searches). The visit that just happened is included in the count. `rootCount` is recorded for later tuning and does not affect v1 thresholds.
 
 **Interrupting.**
 
@@ -214,7 +218,7 @@ The page the user actually sees. This is the product. It has two variants chosen
    - **Yes** → `grantPass(domain)`, log `outcome: "passed"`, `location.replace(originalUrl)`.
    - **No** → log `outcome: "closed"`, `tabs.remove(currentTab)`. If it's the only tab in the window, navigate to the new-tab page instead of closing the window.
    - **Not today** → log `outcome: "notToday"`, add `domain` to the default list's patterns, mark it walled until local midnight (or until the session ends, whichever is later, if a session is active), rebuild rules, then show the wall variant of this page in place.
-6. After the second *Yes* on the same domain in one day, a fourth, smaller option appears under the buttons: "This is work. Stop asking for 30 days." → add to `ignored`, remove from `watched`, log, continue to the URL immediately.
+6. A fourth, smaller option, "This is work. Stop asking for 30 days.", appears under the buttons when **either** the trip was `toolShaped` (first interrupt included) **or** this is at least the second *Yes* on the domain today. Taking it adds an `ignored` entry, removes the domain from `watched`, logs `outcome: "passed"` with `intent: "work"`, and continues to the URL immediately. **Scope:** if the tripping visit's hostname differs from its registrable domain (`ads.reddit.com` vs `reddit.com`), the entry is `scope: "host"` for that hostname and the option's label names it: "ads.reddit.com is work." Otherwise `scope: "domain"`. Never offer to ignore `reddit.com` when the user is on `ads.reddit.com`; the point is that mixed sites stay watched.
 
 ### `reason=list` (listed domain)
 
@@ -238,7 +242,7 @@ Style: system font, one accent color, large type, lots of whitespace, respects `
 ## Options (`options/`)
 
 - Detector: window minutes, reflex threshold, any-visit threshold. One line of help: "Trips when you open the same site N times in the window."
-- Ignored: the domains you said are work, with their expiry. Remove button per row.
+- Ignored: the hosts and domains you said are work, with scope and expiry. Remove button per row. Hand-adding is allowed here but nothing prompts for it; the intended path is the pause page.
 - Lists: add/remove lists, edit name, mode toggle (wall/friction), one pattern per line textarea, enabled toggle. Note under the default list: "Filled in by Not today. You can add sites by hand too."
 - Export / import covers detector config, ignored, lists, schedule, friction. Not visits or attempts.
 - Schedule: enabled toggle, table of windows (days checkboxes, start, end). Validate `start < end`, same day.
@@ -251,7 +255,7 @@ Style: system font, one accent color, large type, lots of whitespace, respects `
 Minimum coverage, all pure:
 
 - `hosts.test.js`: exact match, subdomain match, `www.` stripping, port stripping, IP literal never matches, no partial match (`notreddit.com` must not match `reddit.com`). `registrableDomain`: `old.reddit.com` → `reddit.com`, `www.bbc.co.uk` → `bbc.co.uk`, `localhost` → `null`, `10.0.0.1` → `null`.
-- `loop.test.js`: 3 reflex visits in 60m trips; 2 do not; 3 reflex visits with the first at 61m ago does not; 5 non-reflex visits trip; 4 do not; visits to other domains never count; result carries correct `count`, `reflexCount`, `firstTs`; custom config is honored; `isReflex` true for `typed`/`generated`/`auto_bookmark`/`keyword`, true for `link` from a new-tab previous URL, false for `link` from another http page.
+- `loop.test.js`: 3 reflex visits in 60m trips with `trippedBy: "reflex"`; 2 do not; 3 reflex visits with the first at 61m ago does not; 5 non-reflex visits trip with `trippedBy: "any"` and `toolShaped: true`; 5 visits of which 3 reflex trips with `toolShaped: false`; 4 do not; visits to other domains never count; result carries correct `count`, `reflexCount`, `rootCount`, `firstTs`; custom config is honored; `isReflex` true for `typed`/`generated`/`auto_bookmark`/`keyword`, true for `link` from a new-tab previous URL, false for `link` from another http page. Ignore matching: a `host`-scoped entry for `ads.reddit.com` skips that host and not `reddit.com`; a `domain`-scoped entry for `atlassian.net` skips `highway.atlassian.net`.
 - `schedule.test.js`: inside window, on boundary start (active), on boundary end (inactive), wrong day, disabled schedule, overlapping windows return latest `endsAt`.
 - `rules.test.js`: one rule per pattern, one rule per watched domain with `reason=loop` in the target, stable ids across two calls, pass produces higher-priority allow rule, disabled list yields no rules, wall list with no session yields friction redirects (same redirect target; mode is decided by the pause page from state, not by the rule), ignored domains produce no rules even if watched.
 
@@ -294,6 +298,7 @@ README gets a "Install locally" section: Chrome → `chrome://extensions` → De
 - Plain JS ES modules. No TypeScript, no bundler, no runtime npm deps. `node:test` only for tests.
 - Keep everything under `src/lib/` that's marked pure free of `browser`/`chrome` imports.
 - Never add a stop button, a snooze, a "just this once," or any other exit from an active session. If it feels like the UX needs one, the answer is to shorten the schedule window, not to add an exit.
-- Never seed a blocklist or add an onboarding step that asks which sites to block. Detection finds them. If detection isn't finding them, fix detection.
+- Never seed a blocklist or add an onboarding step that asks which sites to block. Detection finds them. If detection isn't finding them, fix detection. The same goes for the ignore list: no "which sites are for work" step. Arrival type tells us more than the user's guess would.
+- A site is never "bad" or "good." Visits are. Reddit can be a doom loop at 2:47pm and ad research at 10am; the design handles the first with the question and the second with *Yes* plus an intent, never with a whitelist.
 - The detector stays dumb and inspectable: thresholds and a window. Do not add scoring, decay curves, or anything the options page can't explain in one line.
 - When in doubt about UX copy, less. The pause page is a pause, not a lecture. The question is "Is this what you need to be doing?" and nothing more pointed.
