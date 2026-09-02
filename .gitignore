@@ -1,0 +1,19 @@
+# Build output
+dist/
+.build/
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Node (tests only; no runtime deps)
+node_modules/
+
+# Xcode user state
+*.xcuserstate
+xcuserdata/
