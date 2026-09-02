@@ -4,9 +4,15 @@ This document is self-contained. An agent should be able to build phase 1 from t
 
 ## Goal
 
-A WebExtension for **Chrome (MV3) and Firefox (MV3)** that intercepts navigation to a user's blocklisted sites and shows a block page instead. During a scheduled or manually-started **session**, the block is absolute. Outside a session, the block is **friction**: a countdown and an intent prompt, then the user may continue for a short pass. Every attempt is logged and shown in a Today view.
+A WebExtension for **Chrome (MV3) and Firefox (MV3)** that **detects the doom loop and interrupts it.** The loop is: open the same site again and again in a short span, usually from a fresh tab with the address typed by hand. The extension watches every main-frame navigation, and when a domain trips the detector it steps in with a pause page that asks: *"Is this what you need to be doing?"*
 
-The user is one person (John) with a Cmd+T → `reddit` reflex. The extension is a mirror held up to that reflex. It is not tamper-proof and doesn't try to be; that's phase 2's job.
+The user does **not** tell the extension which sites are a problem. There is no onboarding question about sites. The extension learns them by catching the behavior; the user's answers on the pause page build the blocklist over time.
+
+Blocklists then feed **sessions**: during a scheduled or manually-started session, listed sites are walled absolutely. Outside a session, listed sites get **friction**: a countdown and an intent prompt, then a short pass. Every attempt is logged and shown in a Today view.
+
+The user is one person (John). The extension is a mirror held up to a reflex. It is not tamper-proof and doesn't try to be; that's phase 2's job.
+
+**Build order within phase 1: detection first.** A version that only detects loops and shows the pause page, with no lists and no sessions, is already the product. Lists and sessions come after.
 
 ## Non-goals for phase 1
 
@@ -14,6 +20,8 @@ The user is one person (John) with a Cmd+T → `reddit` reflex. The extension is
 - Safari. Not in scope.
 - Blocking non-browser apps.
 - Sync, accounts, streaks, notifications, badges, gamification.
+- Any statistical or ML approach to detection. Two thresholds and a clock. See "Loop detection."
+- Time-on-site tracking. We count arrivals, not minutes.
 - Any build tooling beyond a copy script. Plain ES modules, no bundler, no framework, no npm dependencies at runtime.
 
 ## Environment
@@ -32,12 +40,14 @@ Extension/
 │   ├── background.js          service worker (Chrome) / background script (Firefox)
 │   ├── lib/
 │   │   ├── browser.js         export const browser = globalThis.browser ?? globalThis.chrome
-│   │   ├── hosts.js           normalizeHost(), hostMatches(host, pattern), pure
+│   │   ├── hosts.js           normalizeHost(), hostMatches(host, pattern), registrableDomain(host), pure
+│   │   ├── loop.js            detect(visits, domain, now, config) → trip | null; isReflex(details), pure
 │   │   ├── schedule.js        activeWindow(schedule, now) → {endsAt} | null, pure
 │   │   ├── rules.js           buildRules(lists, state) → DNR rule array, pure
 │   │   ├── session.js         SessionSource: getState(), startSession(), grantPass(). Storage-backed today; daemon-backed in phase 2
 │   │   ├── store.js           typed get/set over storage.local with defaults + migrations
-│   │   └── attempts.js        log(), today(), pure helpers for aggregation
+│   │   ├── attempts.js        log(), today(), pure helpers for aggregation
+│   │   └── watch.js           watched/ignored domain state over storage: watch(domain), isWatched(), ignore(domain, days)
 │   ├── block/
 │   │   ├── block.html
 │   │   ├── block.js
@@ -53,6 +63,7 @@ Extension/
 ├── icons/                     16, 32, 48, 128 PNG. Simple, monochrome, a single dot is fine
 └── test/
     ├── hosts.test.js
+    ├── loop.test.js
     ├── schedule.test.js
     └── rules.test.js
 scripts/
@@ -66,12 +77,28 @@ Everything in `src/lib/` that is marked *pure* must have no browser API imports 
 All state in `storage.local` under one key per collection. Schema version at `meta.schemaVersion`.
 
 ```js
+// visits (rolling, main_frame only, prune > 48h on startup and daily)
+[{ ts, domain, reflex: true|false }]     // domain = registrable domain. No URLs here.
+
+// detector config
+{
+  windowMinutes: 60,
+  reflexThreshold: 3,             // reflex visits to one domain within window → trip
+  anyThreshold: 5                 // visits of any kind to one domain within window → trip
+}
+
+// watched (domains that tripped today; cleared at local midnight)
+[{ domain: "reddit.com", trippedAt, count, lastAnswer: "yes"|"no"|"notToday"|null }]
+
+// ignored (domains the user said are work; detection skips them)
+[{ domain: "atlassian.net", until }]     // until = epoch ms, default now + 30 days
+
 // lists
 {
   id: "uuid",
-  name: "Doom loop",
+  name: "Not today",
   mode: "wall" | "friction",     // wall: blocked during sessions, friction outside. friction: friction always, never walled
-  patterns: ["reddit.com", "discord.com", "facebook.com"],  // see matching rules
+  patterns: [],                   // EMPTY by default. Filled by the pause page's "Not today" answer. See matching rules
   enabled: true
 }
 
@@ -98,26 +125,47 @@ All state in `storage.local` under one key per collection. Schema version at `me
 [{ host: "reddit.com", until: 1725300600000 }]
 
 // attempts (append-only, prune > 30 days on startup)
-[{ ts, host, url, mode: "wall" | "friction", outcome: "blocked" | "passed", intent: "string or null" }]
+[{ ts, domain, url, reason: "loop" | "list", mode: "wall" | "friction",
+   outcome: "blocked" | "passed" | "closed" | "notToday", intent: "string or null" }]
 ```
 
 ### Default seed on first install
 
-One list named "Doom loop", mode `wall`, patterns:
+One list named "Not today", mode `wall`, **no patterns.** Schedule enabled, Mon–Fri 09:00–12:00 and 13:00–17:00. Friction 20s / 10min pass / 3 passes per day. Detector at defaults above. `watched` and `ignored` empty.
 
-```
-reddit.com  old.reddit.com  new.reddit.com  redd.it  i.redd.it  v.redd.it  redditmedia.com  redditstatic.com
-discord.com  discordapp.com  discord.gg  discord.media  discordapp.net
-facebook.com  fb.com  m.facebook.com  messenger.com  fbcdn.net
-```
-
-Schedule enabled, Mon–Fri 09:00–12:00 and 13:00–17:00. Friction 20s / 10min pass / 3 passes per day.
+Do not seed reddit, discord, or facebook. The owner knows those are his current sites; the point is that the extension has to find that out on its own, so that it also finds the next one.
 
 ## Host matching rules (`hosts.js`)
 
 - `normalizeHost(urlOrHost)`: lowercase, strip port, strip trailing dot, strip leading `www.` for comparison only.
+- `registrableDomain(host)`: eTLD+1. Last two labels, or last three when the last two are in a small built-in list of two-part suffixes (`co.uk`, `org.uk`, `com.au`, `co.jp`, `com.br`, and a dozen more; keep the list in the module). `old.reddit.com` → `reddit.com`. IP literals and `localhost` return `null`.
 - A pattern `example.com` matches `example.com` and any subdomain `*.example.com`. That is the only wildcard semantics. No globs, no regex in v1.
 - IP literals never match.
+
+## Loop detection (`loop.js`, `watch.js`, `background.js`)
+
+This is the core of phase 1. Build and test it before lists or sessions.
+
+**Observing.** Listen to `webNavigation.onCommitted` filtered to `frameId === 0`. For each event:
+
+1. `domain = registrableDomain(new URL(details.url).hostname)`. Skip if `null`, if the URL scheme isn't http(s), or if the URL is our own extension page.
+2. Skip if `domain` is in `ignored` with `until > now`.
+3. `reflex = isReflex(details, previousUrlForTab)` where reflex is true when `transitionType ∈ {"typed", "generated", "auto_bookmark", "keyword"}` **or** the tab's previous URL was a new-tab page (`chrome://newtab/`, `about:newtab`, `about:home`, `about:blank`) or the tab had no previous URL (freshly opened). Track the previous URL per tab in memory in the background; it does not need to survive a service worker restart.
+4. Append `{ ts, domain, reflex }` to `visits`.
+5. If `domain` is already `watched` → interrupt (see below).
+6. Else `trip = detect(visits, domain, now, config)`. If `trip` → add to `watched`, then interrupt.
+
+**`detect(visits, domain, now, config)`** is pure. Returns `null` or `{ domain, count, reflexCount, firstTs, windowMinutes }`. Counts visits to `domain` with `ts > now - windowMinutes*60_000`. Trips when `reflexCount >= reflexThreshold` or `count >= anyThreshold`. The visit that just happened is included in the count.
+
+**Interrupting.**
+
+- On the tripping visit: `tabs.update(details.tabId, { url: block.html?u=<url>&d=<domain>&reason=loop })`. The site may have started rendering; a brief flash is accepted.
+- For all later visits that day: add a DNR redirect rule for `domain` (same shape as list rules, `reason=loop` in the redirect target) so the pause page lands before the site loads. Remove the rule at local midnight together with the `watched` entry. Reuse `rules.js`; watched domains are one more input to `buildRules`.
+- A `passes` entry for the domain suppresses both paths until it expires, exactly as for list patterns.
+
+**Midnight reset.** An `alarms` alarm at next local midnight clears `watched` and their rules. The `ignored` list and the `lists` are not touched. `visits` older than 48h are pruned at the same time.
+
+**Chrome/Firefox notes.** Chrome reports `transitionType` fully. Firefox's `webNavigation` supports `onCommitted` with `transitionType` but coverage of `typed` vs `link` is known to be less complete. Verify empirically on both; if Firefox under-reports, the new-tab-previous-URL rule carries the reflex signal there. Write down what you observed in `docs/ARCHITECTURE.md`. Both manifests need the `webNavigation` permission.
 
 ## Session logic (`schedule.js`, `session.js`)
 
@@ -152,31 +200,47 @@ Use `declarativeNetRequest` **dynamic rules** in both browsers.
 - `service_worker` background. Load unpacked from `dist/chrome/`.
 - `declarativeNetRequest` permission plus `declarativeNetRequestFeedback` is not needed. Do not request `webRequest`.
 
-## Block page (`block/`)
+## Pause page (`block/`)
 
-The page the user actually sees. This is the product.
+The page the user actually sees. This is the product. It has two variants chosen by `reason`, and within each, by session state.
 
-Shows, in order, nothing else:
+### `reason=loop` (detection interrupt)
 
-1. The host, plain, no logo. "reddit.com"
-2. The count: "4th time today. 11 minutes since the last one." (Use ordinal; omit the second sentence on the first attempt of the day.)
-3. A single-line text input: placeholder "What were you about to do?" Optional. Saved to the attempt on continue or after 5s idle.
-4. **Wall mode:** one line, "Session ends at 5:00 PM." Nothing clickable. The input still works (intent gets logged with outcome `blocked`).
-   **Friction mode:** a `Continue` button, disabled with a countdown label ("Continue in 18s"), enabled at zero. Under it, small: "2 passes left today." If passes are exhausted, treat as wall for the rest of the day with the line "No passes left today."
-5. On Continue: `grantPass(host)`, log attempt with `outcome: "passed"`, then `location.replace(originalUrl)`.
+1. The domain, plain, no logo. "reddit.com"
+2. The count and span: "4th time in the last 40 minutes." (Ordinal; span is `now - firstTs` in the window, rounded to minutes. If this is a watched-domain revisit later in the day, say "7th time today.")
+3. The question, as its own line, large: **"Is this what you need to be doing?"**
+4. A single-line text input: placeholder "What for?" Optional outside a session; **required** during a session before *Yes* enables. Saved to the attempt.
+5. After a countdown (`delaySeconds`, label on the Yes button: "Yes · 18s"), three buttons:
+   - **Yes** → `grantPass(domain)`, log `outcome: "passed"`, `location.replace(originalUrl)`.
+   - **No** → log `outcome: "closed"`, `tabs.remove(currentTab)`. If it's the only tab in the window, navigate to the new-tab page instead of closing the window.
+   - **Not today** → log `outcome: "notToday"`, add `domain` to the default list's patterns, mark it walled until local midnight (or until the session ends, whichever is later, if a session is active), rebuild rules, then show the wall variant of this page in place.
+6. After the second *Yes* on the same domain in one day, a fourth, smaller option appears under the buttons: "This is work. Stop asking for 30 days." → add to `ignored`, remove from `watched`, log, continue to the URL immediately.
 
-Style: system font, one accent color, large type, lots of whitespace, respects `prefers-color-scheme`. No animations except the countdown text changing. It should feel like a pause, not a punishment or a nag.
+### `reason=list` (listed domain)
+
+1. The domain.
+2. The count: "4th time today. 11 minutes since the last one." (Omit the second sentence on the first attempt of the day.)
+3. The intent input: placeholder "What were you about to do?" Optional. Saved on continue or after 5s idle.
+4. **Wall (session active, or walled by Not today):** one line, "Session ends at 5:00 PM." or "Back tomorrow." Nothing clickable. The input still works; intent is logged with `outcome: "blocked"`.
+   **Friction (no session):** a `Continue` button, disabled with a countdown label ("Continue in 18s"), enabled at zero. Under it, small: "2 passes left today." If passes are exhausted, treat as wall for the rest of the day with the line "No passes left today."
+5. On Continue: `grantPass(domain)`, log `outcome: "passed"`, `location.replace(originalUrl)`.
+
+Style: system font, one accent color, large type, lots of whitespace, respects `prefers-color-scheme`. No animations except the countdown text changing. It should feel like a pause, not a punishment or a nag. The question is asked once, plainly; it is never rephrased as a guilt trip.
 
 ## Popup (`popup/`)
 
 - If a session is active: "Session · ends 5:00 PM" and the source (Scheduled / Manual). Nothing else about the session.
 - If not: buttons `25m`, `1h`, `Until 5pm`, `Custom…`. Each starts a manual session immediately with no confirmation.
+- Loops today: one line per watched domain, "reddit.com · 6 times · last answer: No". Empty state: "Nothing caught today."
 - Today: attempts blocked, passes used / limit, longest gap between attempts. Three numbers, one line each.
 - Link to options.
 
 ## Options (`options/`)
 
-- Lists: add/remove lists, edit name, mode toggle (wall/friction), one pattern per line textarea, enabled toggle.
+- Detector: window minutes, reflex threshold, any-visit threshold. One line of help: "Trips when you open the same site N times in the window."
+- Ignored: the domains you said are work, with their expiry. Remove button per row.
+- Lists: add/remove lists, edit name, mode toggle (wall/friction), one pattern per line textarea, enabled toggle. Note under the default list: "Filled in by Not today. You can add sites by hand too."
+- Export / import covers detector config, ignored, lists, schedule, friction. Not visits or attempts.
 - Schedule: enabled toggle, table of windows (days checkboxes, start, end). Validate `start < end`, same day.
 - Friction: delay seconds, pass minutes, daily pass limit.
 - Firefox: permission banner if host permission missing.
@@ -186,9 +250,10 @@ Style: system font, one accent color, large type, lots of whitespace, respects `
 
 Minimum coverage, all pure:
 
-- `hosts.test.js`: exact match, subdomain match, `www.` stripping, port stripping, IP literal never matches, no partial match (`notreddit.com` must not match `reddit.com`).
+- `hosts.test.js`: exact match, subdomain match, `www.` stripping, port stripping, IP literal never matches, no partial match (`notreddit.com` must not match `reddit.com`). `registrableDomain`: `old.reddit.com` → `reddit.com`, `www.bbc.co.uk` → `bbc.co.uk`, `localhost` → `null`, `10.0.0.1` → `null`.
+- `loop.test.js`: 3 reflex visits in 60m trips; 2 do not; 3 reflex visits with the first at 61m ago does not; 5 non-reflex visits trip; 4 do not; visits to other domains never count; result carries correct `count`, `reflexCount`, `firstTs`; custom config is honored; `isReflex` true for `typed`/`generated`/`auto_bookmark`/`keyword`, true for `link` from a new-tab previous URL, false for `link` from another http page.
 - `schedule.test.js`: inside window, on boundary start (active), on boundary end (inactive), wrong day, disabled schedule, overlapping windows return latest `endsAt`.
-- `rules.test.js`: one rule per pattern, stable ids across two calls, pass produces higher-priority allow rule, disabled list yields no rules, wall list with no session yields friction redirects (same redirect target; mode is decided by the block page from state, not by the rule).
+- `rules.test.js`: one rule per pattern, one rule per watched domain with `reason=loop` in the target, stable ids across two calls, pass produces higher-priority allow rule, disabled list yields no rules, wall list with no session yields friction redirects (same redirect target; mode is decided by the pause page from state, not by the rule), ignored domains produce no rules even if watched.
 
 ## Build & install
 
@@ -214,12 +279,14 @@ README gets a "Install locally" section: Chrome → `chrome://extensions` → De
 
 - [ ] `node --test Extension/test` passes.
 - [ ] `scripts/build-extension.sh` produces both dists.
-- [ ] Loaded in Chrome and Firefox; navigating to `reddit.com` during a schedule window shows the wall page; outside it shows friction and Continue works after the countdown and grants a 10-minute pass.
-- [ ] Discord and Facebook behave the same.
+- [ ] **Detection:** with an empty list, in Chrome and Firefox, Cmd+T → type `reddit.com` → Enter three times inside an hour shows the pause page on the third visit with "3rd time in the last N minutes" and the question. A fourth visit shows the pause page before reddit renders. Opening `reddit.com` by clicking links from another site five times trips it; four does not.
+- [ ] **Answers:** Yes continues and grants a pass; No closes the tab; Not today walls the domain, adds it to the default list, and the list shows it in options. Second Yes in a day surfaces "This is work"; taking it stops detection for that domain.
+- [ ] **Midnight:** watched state and loop rules clear at local midnight (test by moving the alarm or mocking the clock); the list entry from Not today persists.
+- [ ] Navigating to a listed domain during a schedule window shows the wall page; outside it shows friction and Continue works after the countdown and grants a 10-minute pass.
 - [ ] Popup starts a manual session with no confirmation and shows no way to end it.
 - [ ] Attempts appear in the Today counts and survive a browser restart.
 - [ ] Options edits are reflected within one minute or immediately on save.
-- [ ] `docs/ARCHITECTURE.md` written: one page, the `SessionSource` seam called out explicitly for phase 2.
+- [ ] `docs/ARCHITECTURE.md` written: one page, the detection pipeline (`onCommitted` → `detect` → interrupt → rule) and the `SessionSource` seam called out explicitly for phase 2, plus what `transitionType` values each browser actually reported.
 - [ ] Committed on `main` with a message per logical chunk. Don't push without being asked.
 
 ## Conventions for agents working in this repo
@@ -227,4 +294,6 @@ README gets a "Install locally" section: Chrome → `chrome://extensions` → De
 - Plain JS ES modules. No TypeScript, no bundler, no runtime npm deps. `node:test` only for tests.
 - Keep everything under `src/lib/` that's marked pure free of `browser`/`chrome` imports.
 - Never add a stop button, a snooze, a "just this once," or any other exit from an active session. If it feels like the UX needs one, the answer is to shorten the schedule window, not to add an exit.
-- When in doubt about UX copy, less. The block page is a pause, not a lecture.
+- Never seed a blocklist or add an onboarding step that asks which sites to block. Detection finds them. If detection isn't finding them, fix detection.
+- The detector stays dumb and inspectable: thresholds and a window. Do not add scoring, decay curves, or anything the options page can't explain in one line.
+- When in doubt about UX copy, less. The pause page is a pause, not a lecture. The question is "Is this what you need to be doing?" and nothing more pointed.

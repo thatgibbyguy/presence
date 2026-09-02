@@ -9,9 +9,11 @@ Phase 1: the browser extension. Spec: `docs/HANDOFF-extension.md`. Work happens 
 ## Hard rules
 
 - **No exits from an active session.** No stop button, no snooze, no override, no "emergency" anything. This is the owner's explicit product decision. Do not propose it either.
+- **Detection, not prescription.** The product finds problem sites by noticing the same-site-again loop; it never asks the user to list them up front and never ships a seeded blocklist. Build the detector (`Extension/src/lib/loop.js`) before lists or sessions. See `PLAN.md` §1 and §3a.
+- The detector stays two thresholds and a window, fully explainable on the options page. No scoring, no ML.
 - The extension talks to session state only through the `SessionSource` interface in `Extension/src/lib/session.js`. Phase 2 swaps the implementation for one backed by a native daemon.
 - Plain JS ES modules. No TypeScript, no bundler, no runtime dependencies. Tests use `node:test` only.
-- Pure modules under `Extension/src/lib/` (hosts, schedule, rules, attempts helpers) must not import browser APIs, so they stay testable under Node.
+- Pure modules under `Extension/src/lib/` (hosts, loop, schedule, rules, attempts helpers) must not import browser APIs, so they stay testable under Node.
 - Don't push to the remote unless asked. Commit in logical chunks on `main`.
 
 ## Environment facts

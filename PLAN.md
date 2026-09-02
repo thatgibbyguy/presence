@@ -1,19 +1,22 @@
 # Presence — Plan
 
-A macOS app that breaks the Cmd+T → reddit / discord / facebook doom loop. Bespoke first, public later.
+A macOS app that notices the Cmd+T → same-site-again doom loop and interrupts it. Bespoke first, public later.
 
-Status: v0.3 (2026-09-02). Interview done, decisions locked in §8. §9 resolved: extension first. Phase 1 handoff spec is in `docs/HANDOFF-extension.md`.
+Status: v0.4 (2026-09-02). Interview done, decisions locked in §8. §9 resolved: extension first. v0.4 reframes the product around **loop detection** rather than a prescripted blocklist (§1, §3a, §8 Q9). Phase 1 handoff spec is in `docs/HANDOFF-extension.md`.
 
 ---
 
 ## 1. What we're actually fixing
 
-The loop is not "I decided to browse Reddit." It's a reflex: hands open a new tab and type `r` before the brain is involved. So the product has two jobs:
+The loop is not "I decided to browse Reddit." It's a reflex: Cmd+T, type `r`, Enter, before the brain is involved. Close the tab, work for four minutes, do it again. **The site is incidental.** Today it's reddit, discord, facebook; next month it could be anything. Cmd+T is incidental too; the same loop runs from a bookmark or a pinned tab. What's constant is the shape: *the same place, over and over, in a short span, with no reason.*
 
-1. **Enforcement** — when a session is on, the sites are unreachable. Not "hard to reach." Unreachable. Quitting the app, rebooting, editing config: none of it works until the timer ends. This is SelfControl's core promise and why it works.
-2. **Interruption** — when a session is *not* on, still catch the reflex. A block page that says "3rd time today, 11:42 since the last one, what did you come here for?" and makes you wait ~20 seconds before letting you through. Hard blocks alone get uninstalled; friction is what retrains the hand.
+So the product must not depend on John writing the sites down in advance. There is no onboarding question about "your problem sites." The extension has to **watch for the loop itself and interrupt it.** Three jobs, in priority order:
 
-Everything else (schedules, stats) is in service of those two.
+1. **Detection** — notice that the same site is being opened again and again in a short window, especially from a fresh tab with the address typed by hand. That pattern *is* the doom loop, whatever the domain. Detection is behavioral and unscripted. It learns the sites by catching you.
+2. **Interruption** — when a loop is detected, step in on that visit with a page that says: "4th time on reddit.com in the last 40 minutes. Is this what you need to be doing?" and a short pause before you can answer. Hard blocks alone get uninstalled; a question at the right moment is what retrains the hand.
+3. **Enforcement** — for sites you've confirmed are a problem (by answering "not today" on the pause page, or by adding them to a list), sessions make them unreachable. Not "hard to reach." Unreachable, until the timer ends. This is SelfControl's core promise and it stays.
+
+Blocklists still exist, but they are an *output* of detection, not an input. The default list ships empty. Everything else (schedules, stats) is in service of those three.
 
 ## 2. Platform reality (verified 2026-09-02)
 
@@ -28,7 +31,7 @@ Everything else (schedules, stats) is in service of those two.
 **Decision: two-layer architecture.**
 
 - **Layer 1, the wall:** system-level enforcement. Start with a hosts-file daemon (ships day one, no entitlement, no Xcode). Swap to Network Extension once there's a Developer account and the entitlement is granted. Same interface, pluggable backend.
-- **Layer 2, the mirror:** WebExtension for Chrome and Firefox. Block page, attempt counting, intent prompt, friction delay. Present whether or not a hard session is on.
+- **Layer 2, the mirror:** WebExtension for Chrome and Firefox. Loop detection, the pause page, attempt counting, intent prompt, friction delay. Present whether or not a hard session is on. This layer is where the product's actual idea lives; the wall only enforces what the mirror has learned.
 
 ## 3. Product surface (v1)
 
@@ -36,15 +39,34 @@ Everything else (schedules, stats) is in service of those two.
 
 - **Schedule** (primary, per John's answer): recurring sessions, e.g. Mon–Fri 9:00–12:00 and 13:00–17:00. When a scheduled session begins there is no stop button. The menu shows the countdown and nothing else.
 - **Start session now**: 25m / 1h / 2h / until end of day / custom. Same no-stop rule.
-- **Lists**: named blocklists. Default list seeded with reddit, discord, facebook, plus their alt/CDN hosts (`old.reddit.com`, `redd.it`, `discordapp.com`, `discord.gg`, `fb.com`, `m.facebook.com`, `messenger.com`…). Each list has a mode:
+- **Loops**: what detection caught today. Each domain that tripped the detector, how many times, and what you answered. This is the primary "today" view.
+- **Lists**: named blocklists, **empty by default.** They fill up from the pause page: answering "Not today" adds the domain to the default list. Manual editing is available in options for people who want a head start, but nothing is seeded. Each list has a mode:
   - **Wall** — hard block during sessions.
   - **Friction** — always on, never hard-blocked. Show the pause page, allow through after N seconds, optional daily pass limit.
   - Default list is **wall during sessions, friction outside them.**
-- **Today**: attempts blocked, attempts let through, longest gap between attempts. Small, honest, not gamified.
+- **Today**: loops caught, attempts blocked, passes used, longest gap between attempts. Small, honest, not gamified.
 
-**Block page** (extension): the URL you tried, count today, a one-line prompt ("What were you about to do?"), a countdown if friction mode, and for wall mode a single line: "Session ends at 2:15pm." No unlock button anywhere.
+**Pause page** (extension): the domain, the count and span ("4th time in the last 40 minutes"), the question "Is this what you need to be doing?", a one-line intent input, and after a short countdown three answers: **Yes** (continue), **No** (close the tab), **Not today** (wall it until midnight and add it to the list). During a session on a listed site, none of that: one line, "Session ends at 2:15pm." No unlock button anywhere.
 
-**Deliberately not in v1:** streaks, social features, iOS companion, sync, Safari.
+### 3a. Loop detection
+
+The detector is a pure function over a rolling log of main-frame visits. It knows nothing about which sites are "bad."
+
+- **Unit is the registrable domain.** `old.reddit.com`, `www.reddit.com`, and `reddit.com` are one thing. Simple eTLD+1 heuristic with a short list of two-part public suffixes (`co.uk`, `com.au`…); no full PSL in v1.
+- **Visit log**: `{ ts, domain, reflex: bool }`, local only, pruned after 48h. Full URLs are not kept in the log; only the current attempt carries its URL so the pause page can continue to it.
+- **Reflex signal.** A visit is a *reflex* when it arrives with `transitionType` of `typed`, `generated` (omnibox autocomplete), or `auto_bookmark`, or when the tab was a fresh new-tab page immediately before. A visit reached by clicking a link on another site is not a reflex. Both browsers expose this through `webNavigation.onCommitted`.
+- **Trigger** (defaults, tunable in options, revisit after two weeks of real data):
+  - 3 or more reflex visits to the same domain within 60 minutes, **or**
+  - 5 or more visits of any kind to the same domain within 60 minutes.
+- **Watched.** Once a domain trips, it is *watched* until midnight: every further visit that day gets the pause page with a running count, caught cleanly before the page loads. The interrupt on the tripping visit itself lands a moment after navigation starts, so the site may flash briefly. Accepted for v1.
+- **Answers and their consequences.**
+  - *Yes* — continue, pass for `passMinutes`. Logged. After the second *Yes* on the same domain in one day, the page also offers "This is work, stop asking," which puts the domain on an **ignore list for 30 days.** Without this, Jira and Gmail trip the detector on day one and the whole thing gets uninstalled.
+  - *No* — close the tab. Logged. The domain stays watched.
+  - *Not today* — domain is walled until midnight and added to the default list, so future sessions enforce it without asking. This is how the list gets built.
+- **Sessions and detection are independent.** Detection runs always, sessions or not. A session walls *listed* domains only. A detection interrupt stays a question even during a session, because the detector can be wrong and there is no exit from a wall; the difference is that during a session *Not today* walls the domain immediately with the session's end time, and the intent field is required before *Yes* enables.
+- **What it is not:** it is not a time-on-site tracker, it is not a productivity score, and it never phones home. It watches for one shape and asks one question.
+
+**Deliberately not in v1:** streaks, social features, iOS companion, sync, Safari, machine learning of any kind. The detector is two thresholds and a clock.
 
 ## 4. Architecture
 
@@ -61,8 +83,9 @@ presence/
 ├── Extension/                    WebExtension, one codebase, two manifests
 │   ├── manifest.chrome.json      MV3, declarativeNetRequest
 │   ├── manifest.firefox.json     MV3 with Firefox gecko keys
-│   ├── background.js
-│   └── block.html / block.js     the mirror
+│   ├── background.js             webNavigation listener → loop detector → interrupt
+│   ├── lib/loop.js               pure: detect(visits, now, config) → trip | null
+│   └── block.html / block.js     the pause page
 ├── NativeHost/                   native messaging host manifests for Chrome + Firefox
 ├── Tests/
 ├── scripts/                      bundle.sh (assemble .app from SwiftPM build), sign.sh, install-daemon.sh
@@ -104,10 +127,11 @@ Order flipped on 2026-09-02: the extension ships first because it's the only lay
 
 **Phase 1 — The mirror: standalone extension** — daily-driver for John. Full spec: `docs/HANDOFF-extension.md`.
 - WebExtension for Chrome and Firefox from one codebase, plain JS, no bundler.
-- Blocklists with wall/friction modes, schedules, start-now sessions, all stored in the extension for now.
-- Block page with intent prompt, friction countdown, temporary pass, daily pass limit.
-- Attempt log and a Today popup.
-- Unit tests for host matching, schedule evaluation, and rule generation with `node:test`.
+- **Loop detection** over `webNavigation` events: visit log, reflex signal, two thresholds, watched-until-midnight, ignore list. This is the heart of phase 1 and gets built first.
+- Pause page with count and span, the question, intent prompt, countdown, and the three answers (Yes / No / Not today).
+- Blocklists (empty by default, fed by "Not today") with wall/friction modes, schedules, start-now sessions, all stored in the extension for now.
+- Attempt log, a Loops view, and a Today popup.
+- Unit tests for loop detection, registrable-domain extraction, host matching, schedule evaluation, and rule generation with `node:test`.
 - Known limitation, accepted: disable-able in two clicks. The daemon fixes that.
 
 **Phase 2 — The wall: menu bar app + daemon**
@@ -135,6 +159,9 @@ Order flipped on 2026-09-02: the extension ships first because it's the only lay
 - **Chrome/Firefox connection reuse.** Existing connections to a blocked host can survive a few minutes after a session starts. The extension's redirect rule catches these.
 - **Root daemon in a public app.** Must be small, auditable, take no network input, and have an XPC interface of ~4 methods. Threat model documented.
 - **This is a managed work laptop.** See §9.
+- **Detector false positives.** Frequent legitimate sites (Jira, Gmail, GitHub, the company app) will trip the thresholds. Mitigations: reflex weighting, the 30-day ignore list offered after two *Yes* answers, and tunable thresholds. If it still nags, the product fails by being uninstalled, so this gets watched closely in the first two weeks.
+- **Detector false negatives.** A loop across several sites (reddit → twitter → reddit) is not caught per-domain. Out of scope for v1; log it and see if it's real.
+- **`webNavigation` transition types differ between Chrome and Firefox.** Chrome reports `typed`/`generated`/`auto_bookmark` reliably; Firefox's coverage is less complete. If Firefox under-reports, the new-tab-origin signal carries the reflex weight there. Verify empirically in phase 1.
 
 ## 8. Decisions (from interview, 2026-09-02)
 
@@ -148,6 +175,7 @@ Order flipped on 2026-09-02: the extension ships first because it's the only lay
 | 6 | Apple Developer account | **No.** Phase 1–2 use local ad-hoc signing for John's Mac only. Account needed for phase 3 and 5. |
 | 7 | License | **MIT.** |
 | 8 | macOS | **Tahoe (26.6).** Minimum target macOS 26. |
+| 9 | How sites get blocked | **Learned, not prescripted.** No onboarding question about problem sites. The extension detects the same-site-again loop behaviorally and asks "is this what you need to be doing?"; lists are built from the answers. Cmd+T is one trigger, not the definition. (Added 2026-09-02.) |
 
 ## 9. Blocker: this is a company-managed Mac
 
