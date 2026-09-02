@@ -25,7 +25,7 @@ Phase 1: the browser extension. Spec: `docs/HANDOFF-extension.md`. Work happens 
 ## Verifying work
 
 ```bash
-node --test Extension/test
+node --test "Extension/test/*.test.js"
 scripts/build-extension.sh
 ```
 

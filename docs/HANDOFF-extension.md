@@ -250,7 +250,7 @@ Style: system font, one accent color, large type, lots of whitespace, respects `
 - Firefox: permission banner if host permission missing.
 - Export / import JSON of everything except attempts.
 
-## Tests (`Extension/test/`, run with `node --test Extension/test`)
+## Tests (`Extension/test/`, run with `node --test "Extension/test/*.test.js"`)
 
 Minimum coverage, all pure:
 
@@ -281,7 +281,7 @@ README gets a "Install locally" section: Chrome → `chrome://extensions` → De
 
 ## Definition of done for phase 1
 
-- [ ] `node --test Extension/test` passes.
+- [ ] `node --test "Extension/test/*.test.js"` passes.
 - [ ] `scripts/build-extension.sh` produces both dists.
 - [ ] **Detection:** with an empty list, in Chrome and Firefox, Cmd+T → type `reddit.com` → Enter three times inside an hour shows the pause page on the third visit with "3rd time in the last N minutes" and the question. A fourth visit shows the pause page before reddit renders. Opening `reddit.com` by clicking links from another site five times trips it; four does not.
 - [ ] **Answers:** Yes continues and grants a pass; No closes the tab; Not today walls the domain, adds it to the default list, and the list shows it in options. Second Yes in a day surfaces "This is work"; taking it stops detection for that domain.
