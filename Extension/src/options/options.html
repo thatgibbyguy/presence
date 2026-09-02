@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Presence options</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main class="options">
+    <h1>Presence</h1>
+
+    <div id="permBanner" class="banner" hidden>
+      <p>Presence needs access to all sites to show the pause page. Nothing is sent anywhere.</p>
+      <button id="grantPerm" class="btn primary" type="button">Allow access to sites</button>
+    </div>
+
+    <section class="section" id="detectorSection">
+      <h2>Detector</h2>
+      <p class="help">Trips when you open the same site N times in the window.</p>
+      <div class="grid">
+        <label>Window (minutes) <input id="windowMinutes" type="number" min="1" max="1440"></label>
+        <label>Reflex visits <input id="reflexThreshold" type="number" min="1" max="100"></label>
+        <label>Any visits <input id="anyThreshold" type="number" min="1" max="100"></label>
+      </div>
+      <p class="help">A reflex visit is one you typed, picked from the address bar, opened from a bookmark, or started from an empty tab.</p>
+      <div class="row"><button class="btn primary" data-save="detector" type="button">Save</button><span class="saved" data-saved="detector"></span></div>
+    </section>
+
+    <section class="section">
+      <h2>Ignored</h2>
+      <p class="help">Hosts and domains you said are work. Detection skips them until they expire.</p>
+      <table id="ignoredTable" class="table">
+        <thead><tr><th>Match</th><th>Scope</th><th>Until</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="row">
+        <input id="ignoreMatch" type="text" placeholder="host or domain" spellcheck="false">
+        <select id="ignoreScope">
+          <option value="domain">domain and subdomains</option>
+          <option value="host">exact host only</option>
+        </select>
+        <input id="ignoreDays" type="number" min="1" max="3650" value="30" title="days">
+        <button id="ignoreAdd" class="btn" type="button">Add</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Lists</h2>
+      <div id="lists"></div>
+      <div class="row">
+        <button id="addList" class="btn" type="button">Add list</button>
+        <button class="btn primary" data-save="lists" type="button">Save lists</button><span class="saved" data-saved="lists"></span>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Schedule</h2>
+      <label class="check"><input id="scheduleEnabled" type="checkbox"> Enabled</label>
+      <table id="scheduleTable" class="table">
+        <thead><tr><th>Days</th><th>Start</th><th>End</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p id="scheduleError" class="error" hidden></p>
+      <div class="row">
+        <button id="addWindow" class="btn" type="button">Add window</button>
+        <button class="btn primary" data-save="schedule" type="button">Save schedule</button><span class="saved" data-saved="schedule"></span>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Friction</h2>
+      <div class="grid">
+        <label>Delay (seconds) <input id="delaySeconds" type="number" min="0" max="600"></label>
+        <label>Pass length (minutes) <input id="passMinutes" type="number" min="1" max="1440"></label>
+        <label>Passes per day (0 = unlimited) <input id="dailyPassLimit" type="number" min="0" max="100"></label>
+      </div>
+      <div class="row"><button class="btn primary" data-save="friction" type="button">Save</button><span class="saved" data-saved="friction"></span></div>
+    </section>
+
+    <section class="section">
+      <h2>Export / import</h2>
+      <p class="help">Detector, ignored, lists, schedule, friction. Not visits or attempts.</p>
+      <div class="row">
+        <button id="export" class="btn" type="button">Export JSON</button>
+        <label class="btn file">Import JSON <input id="import" type="file" accept="application/json,.json" hidden></label>
+        <span id="importStatus" class="saved"></span>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

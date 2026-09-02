@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Presence</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="popup">
+    <section id="session" class="section">
+      <div id="sessionActive" hidden>
+        <p class="lead" id="sessionLine"></p>
+        <p class="muted" id="sessionSource"></p>
+      </div>
+      <div id="sessionStart" hidden>
+        <p class="muted">Start a session</p>
+        <div class="row">
+          <button class="btn" data-minutes="25" type="button">25m</button>
+          <button class="btn" data-minutes="60" type="button">1h</button>
+          <button class="btn" id="untilFive" type="button">Until 5pm</button>
+          <button class="btn" id="custom" type="button">Custom…</button>
+        </div>
+        <div class="row" id="customRow" hidden>
+          <input id="customMinutes" type="number" min="1" max="1440" step="1" placeholder="minutes">
+          <button class="btn primary" id="customStart" type="button">Start</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Loops today</h2>
+      <ul id="loops" class="list"></ul>
+    </section>
+
+    <section class="section">
+      <h2>Today</h2>
+      <p id="statBlocked" class="stat"></p>
+      <p id="statPasses" class="stat"></p>
+      <p id="statGap" class="stat"></p>
+    </section>
+
+    <footer class="footer">
+      <button id="options" class="link" type="button">Options</button>
+    </footer>
+  </main>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
