@@ -1,0 +1,156 @@
+:root {
+  color-scheme: light dark;
+  --bg: #fbfaf7;
+  --fg: #1c1b19;
+  --muted: #6f6c66;
+  --accent: #2f6df6;
+  --accent-fg: #ffffff;
+  --line: #d9d6cf;
+  --btn: #f1efe9;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161514;
+    --fg: #ece9e2;
+    --muted: #9a968e;
+    --accent: #6f9cff;
+    --accent-fg: #0e0e0d;
+    --line: #333130;
+    --btn: #232120;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 18px;
+  line-height: 1.4;
+}
+
+.page {
+  min-height: 100%;
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 18vh 1.5rem 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.domain {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+
+.count {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.question {
+  margin: 0.5rem 0 0.75rem;
+  font-size: clamp(2rem, 5vw, 2.75rem);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.intent {
+  width: 100%;
+  font: inherit;
+  font-size: 1.1rem;
+  padding: 0.75rem 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg);
+  outline: none;
+}
+
+.intent:focus {
+  border-bottom-color: var(--accent);
+}
+
+.intent::placeholder {
+  color: var(--muted);
+}
+
+.wall-line {
+  margin: 0.5rem 0 0;
+  font-size: 1.25rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+.btn {
+  font: inherit;
+  font-size: 1.05rem;
+  padding: 0.7rem 1.3rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--btn);
+  color: var(--fg);
+  cursor: pointer;
+  min-width: 6.5rem;
+}
+
+.btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.btn:not(:disabled):hover {
+  filter: brightness(0.97);
+}
+
+.small {
+  margin: 0;
+  width: 100%;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.link {
+  align-self: flex-start;
+  margin-top: 1rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.9rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.link:hover {
+  color: var(--fg);
+}
+
+[hidden] {
+  display: none !important;
+}

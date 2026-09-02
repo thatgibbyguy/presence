@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Presence</title>
+  <link rel="stylesheet" href="block.css">
+</head>
+<body>
+  <main id="page" class="page" hidden>
+    <p id="domain" class="domain"></p>
+    <p id="count" class="count"></p>
+    <h1 id="question" class="question" hidden>Is this what you need to be doing?</h1>
+
+    <input id="intent" class="intent" type="text" autocomplete="off" spellcheck="false" maxlength="200">
+
+    <p id="wallLine" class="wall-line" hidden></p>
+
+    <div id="loopActions" class="actions" hidden>
+      <button id="yes" class="btn primary" type="button" disabled>Yes</button>
+      <button id="no" class="btn" type="button">No</button>
+      <button id="notToday" class="btn" type="button">Not today</button>
+    </div>
+
+    <div id="listActions" class="actions" hidden>
+      <button id="continue" class="btn primary" type="button" disabled>Continue</button>
+      <p id="passesLeft" class="small" hidden></p>
+    </div>
+
+    <button id="work" class="link" type="button" hidden></button>
+  </main>
+  <script type="module" src="block.js"></script>
+</body>
+</html>
