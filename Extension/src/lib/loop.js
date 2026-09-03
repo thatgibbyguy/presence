@@ -39,11 +39,32 @@ export function isNewTabUrl(url) {
  * A visit is a reflex when it arrived with a reflex transitionType, or when
  * the tab had no previous URL / was on a new-tab page just before.
  * `details` is a webNavigation.onCommitted payload (only transitionType is read).
+ *
+ * `opts.openedByPage` marks a tab spawned by a link on another page (has an
+ * `openerTabId` and no navigation history of its own, e.g. target="_blank" or
+ * cmd-click). Such a tab has no previous URL either, but it did not come from
+ * Cmd+T: the new-tab fallback below does not apply to it, so only an actual
+ * reflex transitionType (typed/generated/auto_bookmark/keyword) counts.
  */
-export function isReflex(details, previousUrl) {
+export function isReflex(details, previousUrl, opts) {
   const t = details && details.transitionType;
   if (t && REFLEX_TRANSITIONS.has(t)) return true;
+  if (opts && opts.openedByPage) return false;
   return isNewTabUrl(previousUrl);
+}
+
+/**
+ * Does this visit count as an arrival at `domain`? True when there is no
+ * origin (a fresh tab, Cmd+T or otherwise, has no "previous page") or the
+ * origin is a different registrable domain. False when the origin is the
+ * same domain — clicking from page to page within one site is depth, not a
+ * new arrival, and must not feed the detector. `originDomain` is the
+ * registrable domain of the tab's previous page, or of the opener tab's page
+ * for a tab spawned by a link; null/undefined means no origin.
+ */
+export function isArrival(domain, originDomain) {
+  if (originDomain == null) return true;
+  return originDomain !== domain;
 }
 
 /** Root visit: path is "/" or empty and there is no query string. */

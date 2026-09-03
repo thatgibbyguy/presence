@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   detect,
   isReflex,
+  isArrival,
   isIgnored,
   isRootUrl,
   ordinal,
@@ -151,6 +152,36 @@ test("isReflex: link from another http page is not a reflex", () => {
   assert.equal(isReflex({ transitionType: "link" }, "https://news.ycombinator.com/"), false);
   assert.equal(isReflex({ transitionType: "form_submit" }, "https://google.com/search?q=x"), false);
   assert.equal(isReflex({ transitionType: "reload" }, "https://reddit.com/"), false);
+});
+
+test("isReflex: opener-spawned tab (openedByPage) with no previous URL is not a reflex for a link", () => {
+  // A Redfin listing opened via target="_blank" or cmd-click: transitionType
+  // "link", no previous URL for the new tab. Must not look like Cmd+T + typed.
+  assert.equal(isReflex({ transitionType: "link" }, undefined, { openedByPage: true }), false);
+  assert.equal(isReflex({ transitionType: "link" }, null, { openedByPage: true }), false);
+});
+
+test("isReflex: typed in an opener-spawned tab is still a reflex", () => {
+  assert.equal(isReflex({ transitionType: "typed" }, undefined, { openedByPage: true }), true);
+  assert.equal(isReflex({ transitionType: "auto_bookmark" }, undefined, { openedByPage: true }), true);
+});
+
+test("isReflex: a genuine Cmd+T tab (no opener) keeps the new-tab fallback", () => {
+  assert.equal(isReflex({ transitionType: "link" }, undefined, { openedByPage: false }), true);
+  assert.equal(isReflex({ transitionType: "link" }, undefined), true);
+});
+
+test("isArrival: same domain as the origin is not an arrival", () => {
+  assert.equal(isArrival("reddit.com", "reddit.com"), false);
+});
+
+test("isArrival: a different origin domain is an arrival", () => {
+  assert.equal(isArrival("redfin.com", "gmail.com"), true);
+});
+
+test("isArrival: no origin (new tab / nothing) is an arrival", () => {
+  assert.equal(isArrival("redfin.com", null), true);
+  assert.equal(isArrival("redfin.com", undefined), true);
 });
 
 test("isRootUrl", () => {

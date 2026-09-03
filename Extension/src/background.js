@@ -2,6 +2,7 @@
 // One file for both; nothing service-worker-only in here.
 //
 // Pipeline: webNavigation.onCommitted → registrableDomain → ignored? pass? →
+// arrival? (origin domain differs, or none — same-site depth is skipped) →
 // log visit → watched? interrupt : detect() → trip? watch + rebuild rules +
 // interrupt. Rules (declarativeNetRequest dynamic) are recomputed from
 // storage whenever lists / watched / walled / passes / ignored change.
@@ -11,7 +12,7 @@ import * as store from "./lib/store.js";
 import * as watch from "./lib/watch.js";
 import { createSessionSource } from "./lib/session.js";
 import { buildRules, rulesSignature } from "./lib/rules.js";
-import { detect, isReflex, isRootUrl } from "./lib/loop.js";
+import { detect, isReflex, isRootUrl, isArrival } from "./lib/loop.js";
 import { registrableDomain, normalizeHost, hostMatches } from "./lib/hosts.js";
 import { nextLocalMidnight, startOfLocalDay } from "./lib/schedule.js";
 import { prune as pruneAttempts } from "./lib/attempts.js";
@@ -188,6 +189,49 @@ async function hasPass(host, now) {
   return passes.some((p) => p.until > now && hostMatches(host, p.host));
 }
 
+/** Registrable domain of an http(s) origin URL, or null (non-http, unparseable, no origin). */
+function originDomainOf(origin) {
+  if (!origin) return null;
+  try {
+    const u = new URL(origin);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return registrableDomain(normalizeHost(u.hostname));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Where did this tab's navigation come from? If the tab already has a
+ * previous URL (`prev`), that's the origin and this is an ordinary same-tab
+ * navigation. Otherwise the tab may have just been spawned by a link on
+ * another page (target="_blank", cmd-click): read `openerTabId` and use the
+ * opener's page as the origin, marking `openedByPage` so `isReflex` doesn't
+ * treat the empty previous-URL as a Cmd+T reflex. A genuine Cmd+T tab has no
+ * opener, so it keeps its existing reflex behavior.
+ */
+async function resolveVisitContext(tabId, prev) {
+  if (prev) return { originDomain: originDomainOf(prev), openedByPage: false };
+  let openerTabId = null;
+  try {
+    const tab = await browser.tabs.get(tabId);
+    openerTabId = tab && tab.openerTabId != null ? tab.openerTabId : null;
+  } catch (err) {
+    openerTabId = null;
+  }
+  if (openerTabId == null) return { originDomain: null, openedByPage: false };
+  let origin = prevUrlByTab.get(openerTabId) || null;
+  if (!origin) {
+    try {
+      const openerTab = await browser.tabs.get(openerTabId);
+      origin = (openerTab && openerTab.url) || null;
+    } catch (err) {
+      origin = null;
+    }
+  }
+  return { originDomain: originDomainOf(origin), openedByPage: true };
+}
+
 // ---------------------------------------------------------------- navigation
 
 async function onCommitted(details) {
@@ -210,7 +254,10 @@ async function onCommitted(details) {
     const host = normalizeHost(u.hostname);
     const domain = registrableDomain(host);
     if (!domain) return;
-    await appendVisit({ ts: now, domain, host, reflex: isReflex(details, prev), root: isRootUrl(u) });
+    const { originDomain, openedByPage } = await resolveVisitContext(details.tabId, prev);
+    if (!isArrival(domain, originDomain)) return; // depth within the same site, not a new arrival
+    const reflex = isReflex(details, prev, { openedByPage });
+    await appendVisit({ ts: now, domain, host, reflex, root: isRootUrl(u) });
     return;
   }
 
@@ -228,7 +275,10 @@ async function onCommitted(details) {
   if (await watch.isIgnoredNow(domain, host, now)) return;
   if (await hasPass(host, now)) return; // continuing after Yes / Continue, or inside a pass
 
-  const reflex = isReflex(details, prev);
+  const { originDomain, openedByPage } = await resolveVisitContext(details.tabId, prev);
+  if (!isArrival(domain, originDomain)) return; // depth within the same site, not a new arrival
+
+  const reflex = isReflex(details, prev, { openedByPage });
   const root = isRootUrl(u);
   const visits = await appendVisit({ ts: now, domain, host, reflex, root });
 
@@ -309,7 +359,7 @@ async function handleMessage(msg, sender) {
       return { ok: true, until };
     }
     case "ignore": {
-      await watch.ignore(msg.match, msg.scope, msg.days, Date.now());
+      await watch.ignore(msg.match, msg.scope, msg.until, Date.now());
       await watch.unwatch(msg.domain);
       await rebuildRules();
       return { ok: true };
