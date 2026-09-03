@@ -122,6 +122,15 @@ input[type="number"] {
   color: var(--muted);
 }
 
+.muted-list {
+  margin-top: 4px;
+}
+
+.muted-list li {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .stat {
   padding: 1px 0;
 }

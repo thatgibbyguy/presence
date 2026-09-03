@@ -107,16 +107,21 @@ async function loadIgnored() {
   }
 }
 
-$("ignoreAdd").addEventListener("click", async () => {
-  const match = normalizeHost($("ignoreMatch").value);
-  if (!match || registrableDomain(match) === null) return;
-  const scope = $("ignoreScope").value === "host" ? "host" : "domain";
-  const days = Math.max(1, Math.round(Number($("ignoreDays").value)) || 30);
-  await watch.ignore(scope === "domain" ? registrableDomain(match) : match, scope, days);
-  $("ignoreMatch").value = "";
-  await loadIgnored();
-  await sync();
-});
+function wireIgnoreAdd(buttonId, durationKey) {
+  $(buttonId).addEventListener("click", async () => {
+    const match = normalizeHost($("ignoreMatch").value);
+    if (!match || registrableDomain(match) === null) return;
+    const scope = $("ignoreScope").value === "host" ? "host" : "domain";
+    const until = watch.untilForDuration(durationKey, Date.now());
+    await watch.ignore(scope === "domain" ? registrableDomain(match) : match, scope, until);
+    $("ignoreMatch").value = "";
+    await loadIgnored();
+    await sync();
+  });
+}
+wireIgnoreAdd("ignoreAdd1h", "1h");
+wireIgnoreAdd("ignoreAddToday", "today");
+wireIgnoreAdd("ignoreAdd30d", "30d");
 
 // ---------------------------------------------------------------- lists
 

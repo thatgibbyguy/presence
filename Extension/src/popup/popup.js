@@ -3,8 +3,9 @@
 
 import { browser } from "../lib/browser.js";
 import * as store from "../lib/store.js";
+import * as watch from "../lib/watch.js";
 import { createSessionSource } from "../lib/session.js";
-import { formatClock } from "../lib/schedule.js";
+import { formatClock, nextLocalMidnight } from "../lib/schedule.js";
 import { summarize } from "../lib/attempts.js";
 
 const $ = (id) => document.getElementById(id);
@@ -58,6 +59,33 @@ async function renderLoops() {
   }
 }
 
+/** "asking paused until 3:15 PM" / "... until tomorrow" / "... for N days". */
+function ignoreDurationLabel(until, now) {
+  const midnight = nextLocalMidnight(now);
+  if (until < midnight) return `asking paused until ${formatClock(until)}`;
+  const twoDaysOut = now + 2 * 86_400_000;
+  if (until < twoDaysOut) return "asking paused until tomorrow";
+  const days = Math.ceil((until - now) / 86_400_000);
+  return `asking paused for ${days} ${days === 1 ? "day" : "days"}`;
+}
+
+async function renderIgnored() {
+  const now = Date.now();
+  const ignored = await watch.getIgnored(now);
+  const ul = $("ignored");
+  ul.textContent = "";
+  if (!ignored.length) {
+    ul.hidden = true;
+    return;
+  }
+  ul.hidden = false;
+  for (const e of [...ignored].sort((a, b) => a.match.localeCompare(b.match))) {
+    const li = document.createElement("li");
+    li.textContent = `${e.match} · ${ignoreDurationLabel(e.until, now)}`;
+    ul.appendChild(li);
+  }
+}
+
 function formatGap(ms) {
   if (!ms) return "—";
   const m = Math.round(ms / 60_000);
@@ -76,7 +104,7 @@ async function renderToday() {
 }
 
 async function render() {
-  await Promise.all([renderSession(), renderLoops(), renderToday()]);
+  await Promise.all([renderSession(), renderLoops(), renderIgnored(), renderToday()]);
 }
 
 for (const b of document.querySelectorAll("[data-minutes]")) {
