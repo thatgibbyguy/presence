@@ -77,10 +77,15 @@ Everything in `src/lib/` that is marked *pure* must have no browser API imports 
 All state in `storage.local` under one key per collection. Schema version at `meta.schemaVersion`.
 
 ```js
-// visits (rolling, main_frame only, prune > 48h on startup and daily)
+// visits — ARRIVALS ONLY (rolling, main_frame only, prune > 48h on startup and daily)
 [{ ts, domain, host, reflex: true|false, root: true|false }]
 // domain = registrable domain; host = exact hostname (needed for scoped ignores);
 // root = path was "/" or empty. No full URLs here.
+// An arrival is a visit whose origin (the tab's previous page, or the opener
+// tab's page for a tab spawned by a link) is on a different registrable
+// domain, or has no origin at all (a fresh tab). Clicking page to page within
+// one site — five Redfin listings, reddit.com -> reddit.com/r/adops — is
+// depth, not a new arrival, and is never appended here.
 
 // detector config
 {
@@ -154,10 +159,12 @@ This is the core of phase 1. Build and test it before lists or sessions.
 
 1. `domain = registrableDomain(new URL(details.url).hostname)`. Skip if `null`, if the URL scheme isn't http(s), or if the URL is our own extension page.
 2. Skip if an `ignored` entry with `until > now` matches: scope `domain` matches when `entry.match === domain`; scope `host` matches when `entry.match === hostname`.
-3. `reflex = isReflex(details, previousUrlForTab)` where reflex is true when `transitionType ∈ {"typed", "generated", "auto_bookmark", "keyword"}` **or** the tab's previous URL was a new-tab page (`chrome://newtab/`, `about:newtab`, `about:home`, `about:blank`) or the tab had no previous URL (freshly opened). Track the previous URL per tab in memory in the background; it does not need to survive a service worker restart. `root = (url.pathname === "/" || url.pathname === "") && !url.search`.
-4. Append `{ ts, domain, host: hostname, reflex, root }` to `visits`.
-5. If `domain` is already `watched` → interrupt (see below).
-6. Else `trip = detect(visits, domain, now, config)`. If `trip` → add to `watched`, then interrupt.
+3. Resolve the tab's origin. If the tab already has a previous URL (tracked per tab in memory; it does not need to survive a service worker restart), that's the origin. Otherwise the tab may have just been spawned by a link on another page (`target="_blank"`, cmd-click): call `browser.tabs.get(details.tabId)` (wrapped in try/catch), read `openerTabId`, and use the opener's previous URL (or its current `tabs.get` URL) as the origin, marking `openedByPage`. A genuine Cmd+T tab has no opener, so its origin stays "none". `originDomain = registrableDomain(normalizeHost(hostname))` for an http(s) origin, else `null`.
+4. **Arrival check.** `isArrival(domain, originDomain)` is false only when `originDomain === domain` (same-site depth). If not an arrival: still record the tab's previous URL for next time, but do **not** append to `visits` and do not run detection or interrupt — the click just navigated within a site that may already be watched, and its DNR rule (unchanged) still redirects that case; this step only keeps the *count* honest.
+5. `reflex = isReflex(details, previousUrlForTab, { openedByPage })` where reflex is true when `transitionType ∈ {"typed", "generated", "auto_bookmark", "keyword"}` **or** the tab's previous URL was a new-tab page (`chrome://newtab/`, `about:newtab`, `about:home`, `about:blank`) or the tab had no previous URL (freshly opened) — **unless** `openedByPage` is true, in which case that new-tab/no-previous-URL fallback does not apply (three Redfin listings opened in three new tabs via links must not look like Cmd+T + typed three times). `root = (url.pathname === "/" || url.pathname === "") && !url.search`.
+6. Append `{ ts, domain, host: hostname, reflex, root }` to `visits`.
+7. If `domain` is already `watched` → interrupt (see below).
+8. Else `trip = detect(visits, domain, now, config)`. If `trip` → add to `watched`, then interrupt.
 
 **`detect(visits, domain, now, config)`** is pure. Returns `null` or `{ domain, count, reflexCount, rootCount, firstTs, windowMinutes, trippedBy: "reflex" | "any", toolShaped: bool }`. Counts visits to `domain` with `ts > now - windowMinutes*60_000`. Trips when `reflexCount >= reflexThreshold` (`trippedBy: "reflex"`) or `count >= anyThreshold` (`trippedBy: "any"`). `toolShaped` is true when `trippedBy === "any"` and `reflexCount * 2 < count` (a majority of arrivals were links, notifications, or searches). The visit that just happened is included in the count. `rootCount` is recorded for later tuning and does not affect v1 thresholds.
 
@@ -218,7 +225,7 @@ The page the user actually sees. This is the product. It has two variants chosen
    - **Yes** → `grantPass(domain)`, log `outcome: "passed"`, `location.replace(originalUrl)`.
    - **No** → log `outcome: "closed"`, `tabs.remove(currentTab)`. If it's the only tab in the window, navigate to the new-tab page instead of closing the window.
    - **Not today** → log `outcome: "notToday"`, add `domain` to the default list's patterns, mark it walled until local midnight (or until the session ends, whichever is later, if a session is active), rebuild rules, then show the wall variant of this page in place.
-6. A fourth, smaller option, "This is work. Stop asking for 30 days.", appears under the buttons when **either** the trip was `toolShaped` (first interrupt included) **or** this is at least the second *Yes* on the domain today. Taking it adds an `ignored` entry, removes the domain from `watched`, logs `outcome: "passed"` with `intent: "work"`, and continues to the URL immediately. **Scope:** if the tripping visit's hostname differs from its registrable domain (`ads.reddit.com` vs `reddit.com`), the entry is `scope: "host"` for that hostname and the option's label names it: "ads.reddit.com is work." Otherwise `scope: "domain"`. Never offer to ignore `reddit.com` when the user is on `ads.reddit.com`; the point is that mixed sites stay watched.
+6. A fourth, smaller row, "Stop asking about `<domain-or-host>`" followed by three small buttons — **1 hour / Today / 30 days** — appears under the main buttons when **either** the trip was `toolShaped` (first interrupt included) **or** this is at least the second *Yes* on the domain today. Taking any duration adds an `ignored` entry with `until` set from that duration (never a pass — passes must not be used here, since a pass allow rule would outrank a list wall in `rules.js`), removes the domain from `watched`, logs `outcome: "passed"` with `intent: "work"`, and continues to the URL immediately. **Scope:** if the tripping visit's hostname differs from its registrable domain (`ads.reddit.com` vs `reddit.com`), the entry is `scope: "host"` for that hostname and the row's label names it: "Stop asking about ads.reddit.com." Otherwise `scope: "domain"`. Never offer to ignore `reddit.com` when the user is on `ads.reddit.com`; the point is that mixed sites stay watched.
 
 ### `reason=list` (listed domain)
 
@@ -255,7 +262,7 @@ Style: system font, one accent color, large type, lots of whitespace, respects `
 Minimum coverage, all pure:
 
 - `hosts.test.js`: exact match, subdomain match, `www.` stripping, port stripping, IP literal never matches, no partial match (`notreddit.com` must not match `reddit.com`). `registrableDomain`: `old.reddit.com` → `reddit.com`, `www.bbc.co.uk` → `bbc.co.uk`, `localhost` → `null`, `10.0.0.1` → `null`.
-- `loop.test.js`: 3 reflex visits in 60m trips with `trippedBy: "reflex"`; 2 do not; 3 reflex visits with the first at 61m ago does not; 5 non-reflex visits trip with `trippedBy: "any"` and `toolShaped: true`; 5 visits of which 3 reflex trips with `toolShaped: false`; 4 do not; visits to other domains never count; result carries correct `count`, `reflexCount`, `rootCount`, `firstTs`; custom config is honored; `isReflex` true for `typed`/`generated`/`auto_bookmark`/`keyword`, true for `link` from a new-tab previous URL, false for `link` from another http page. Ignore matching: a `host`-scoped entry for `ads.reddit.com` skips that host and not `reddit.com`; a `domain`-scoped entry for `atlassian.net` skips `highway.atlassian.net`.
+- `loop.test.js`: 3 reflex visits in 60m trips with `trippedBy: "reflex"`; 2 do not; 3 reflex visits with the first at 61m ago does not; 5 non-reflex visits trip with `trippedBy: "any"` and `toolShaped: true`; 5 visits of which 3 reflex trips with `toolShaped: false`; 4 do not; visits to other domains never count; result carries correct `count`, `reflexCount`, `rootCount`, `firstTs`; custom config is honored; `isReflex` true for `typed`/`generated`/`auto_bookmark`/`keyword`, true for `link` from a new-tab previous URL, false for `link` from another http page. `isReflex` with `{ openedByPage: true }`: a `link` transition with no previous URL is **not** a reflex (opener-spawned tab, e.g. a Redfin listing opened via cmd-click), but `typed`/`auto_bookmark` still are; without `openedByPage` (a genuine Cmd+T tab) the no-previous-URL fallback still applies. `isArrival(domain, originDomain)`: false when `originDomain === domain`, true when it differs, true when `null`/`undefined`. Ignore matching: a `host`-scoped entry for `ads.reddit.com` skips that host and not `reddit.com`; a `domain`-scoped entry for `atlassian.net` skips `highway.atlassian.net`; an expired `until` never matches.
 - `schedule.test.js`: inside window, on boundary start (active), on boundary end (inactive), wrong day, disabled schedule, overlapping windows return latest `endsAt`.
 - `rules.test.js`: one rule per pattern, one rule per watched domain with `reason=loop` in the target, stable ids across two calls, pass produces higher-priority allow rule, disabled list yields no rules, wall list with no session yields friction redirects (same redirect target; mode is decided by the pause page from state, not by the rule), ignored domains produce no rules even if watched.
 

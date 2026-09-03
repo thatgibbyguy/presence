@@ -13,8 +13,14 @@ webNavigation.onCommitted (frameId 0)
   ├─ http(s) only → registrableDomain(hostname)   hosts.js, eTLD+1 heuristic
   ├─ ignored (domain/host scoped, unexpired)?     → stop
   ├─ active pass covers host?                     → stop (continuing after Yes/Continue)
-  ├─ reflex = isReflex(details, prevUrlForTab)    loop.js: typed | generated | auto_bookmark | keyword,
-  │                                               or previous tab URL was a new-tab page / none
+  ├─ resolve origin: tab's previous URL, or (no    background.js resolveVisitContext():
+  │  previous URL) the opener tab's page via        tabs.get(tabId).openerTabId, then
+  │  openerTabId → originDomain, openedByPage       prevUrlByTab.get(openerTabId) or tabs.get(openerTabId)
+  ├─ isArrival(domain, originDomain)?             → stop if false (same-site depth, not
+  │                                                 a new arrival); still records prevUrlByTab
+  ├─ reflex = isReflex(details, prevUrlForTab,    loop.js: typed | generated | auto_bookmark | keyword,
+  │           { openedByPage })                   or previous tab URL was a new-tab page / none —
+  │                                                unless openedByPage suppresses that fallback
   ├─ append { ts, domain, host, reflex, root } to visits
   ├─ watched?                                     → interrupt (tabs.update → block.html?reason=loop)
   └─ detect(visits, domain, now, config)          loop.js: two thresholds, one window
@@ -53,6 +59,8 @@ This build was produced without loading the extension in any browser (managed ma
 | `keyword` | reported | rare |
 | `link` after a new-tab page | reflex via previous-URL rule (`chrome://newtab/`, `chrome://new-tab-page/`) | reflex via previous-URL rule (`about:newtab`, `about:home`, `about:blank`) |
 | `transitionType` on a DNR-redirected commit | assumed to carry the original type | assumed the same |
+| `tabs.Tab.openerTabId` set for a tab opened via `target="_blank"` / cmd-click | assumed present per MDN/Chrome docs | assumed present per MDN docs |
+| `webNavigation.onCommitted` fires for `chrome://newtab/` / `about:newtab` itself (needed so Cmd+T seeds a previous URL before the next real commit) | assumed yes, but unverified — if it does not fire, `prevUrlByTab` stays unset for a brand-new tab and the tab is still correctly treated as having no previous URL (arrival + reflex fallback both behave the same as if it had fired) | same assumption, same fallback behavior either way |
 
 If Firefox under-reports, the previous-URL rule carries the reflex signal there. Please record actual observed values here after a day of use in each browser (`chrome://extensions` → service worker console; `about:debugging` → Inspect), and note whether the DNR-redirected block page commit kept the original `transitionType`.
 
