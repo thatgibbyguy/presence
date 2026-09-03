@@ -6,8 +6,25 @@
 
 import * as store from "./store.js";
 import { isIgnored } from "./loop.js";
+import { nextLocalMidnight } from "./schedule.js";
 
 export const IGNORE_DAYS_DEFAULT = 30;
+
+// Duration presets shared by the pause page's "Stop asking" row and the
+// options page's hand-add control. Same three choices, same meaning
+// everywhere: an `ignored` entry's `until`, never a pass.
+export const IGNORE_DURATIONS = Object.freeze([
+  { key: "1h", label: "1 hour" },
+  { key: "today", label: "Today" },
+  { key: "30d", label: "30 days" },
+]);
+
+/** Turn a duration key ("1h" | "today" | "30d") into an epoch-ms `until`. */
+export function untilForDuration(key, now = Date.now()) {
+  if (key === "1h") return now + 60 * 60_000;
+  if (key === "today") return nextLocalMidnight(now);
+  return now + IGNORE_DAYS_DEFAULT * 86_400_000; // "30d" and any unknown key
+}
 
 export async function getWatched() {
   return store.get("watched");
@@ -85,18 +102,23 @@ export async function isIgnoredNow(domain, host, now = Date.now()) {
 }
 
 /**
- * Ignore a host or domain for `days`. Replaces an existing entry with the same
- * match + scope.
+ * Ignore a host or domain until `until` (epoch ms; defaults to 30 days out).
+ * Replaces an existing entry with the same match + scope.
  */
-export async function ignore(match, scope = "domain", days = IGNORE_DAYS_DEFAULT, now = Date.now()) {
+export async function ignore(match, scope = "domain", until, now = Date.now()) {
+  if (until == null) until = now + IGNORE_DAYS_DEFAULT * 86_400_000;
   const ignored = await store.get("ignored");
-  const until = now + days * 86_400_000;
   const idx = ignored.findIndex((e) => e.match === match && e.scope === scope);
   const entry = { match, scope, until };
   if (idx === -1) ignored.push(entry);
   else ignored[idx] = entry;
   await store.set("ignored", ignored);
   return entry;
+}
+
+/** Compatibility helper for callers that still think in days rather than `until`. */
+export async function ignoreForDays(match, scope, days = IGNORE_DAYS_DEFAULT, now = Date.now()) {
+  return ignore(match, scope, now + days * 86_400_000, now);
 }
 
 export async function unignore(match, scope) {

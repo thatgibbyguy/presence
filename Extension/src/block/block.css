@@ -151,6 +151,31 @@ body {
   color: var(--fg);
 }
 
+.ignore-row {
+  margin-top: 1rem;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.ignore-label {
+  width: 100%;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.btn.small {
+  min-width: 0;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.btn.small:not(:disabled):hover {
+  color: var(--fg);
+}
+
 [hidden] {
   display: none !important;
 }

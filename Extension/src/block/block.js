@@ -25,7 +25,11 @@ const el = {
   listActions: $("listActions"),
   cont: $("continue"),
   passesLeft: $("passesLeft"),
-  work: $("work"),
+  ignoreRow: $("ignoreRow"),
+  ignoreLabel: $("ignoreLabel"),
+  ignore1h: $("ignore1h"),
+  ignoreToday: $("ignoreToday"),
+  ignore30d: $("ignore30d"),
 };
 
 const session = createSessionSource({
@@ -156,19 +160,36 @@ async function renderLoop({ now, state, friction, allAttempts, domain, host, ori
     refreshYes();
   });
 
-  // "This is work": tool-shaped trip, or the second Yes today.
+  // "Stop asking": tool-shaped trip, or the second Yes today. Three durations,
+  // all backed by the `ignored` mechanism — never a pass, per PLAN.md §3a.
   const yesToday = attempts.yesCountToday(allAttempts, domain, now);
   if ((watched && watched.toolShaped) || yesToday >= 2) {
     const hostScoped = host && host !== domain;
-    el.work.textContent = hostScoped ? `${host} is work. Stop asking for 30 days.` : "This is work. Stop asking for 30 days.";
-    el.work.hidden = false;
-    el.work.addEventListener("click", async () => {
-      el.work.disabled = true;
-      await amend({ outcome: "passed", intent: "work" });
-      // Background rebuilds rules before replying, so the navigation goes through.
-      await send({ type: "ignore", match: hostScoped ? host : domain, scope: hostScoped ? "host" : "domain", domain });
-      location.replace(originalUrl);
-    });
+    const label = hostScoped ? host : domain;
+    el.ignoreLabel.textContent = `Stop asking about ${label}`;
+    el.ignoreRow.hidden = false;
+    const durationButtons = [
+      [el.ignore1h, "1h"],
+      [el.ignoreToday, "today"],
+      [el.ignore30d, "30d"],
+    ];
+    const disableAll = () => durationButtons.forEach(([btn]) => (btn.disabled = true));
+    for (const [btn, key] of durationButtons) {
+      btn.addEventListener("click", async () => {
+        disableAll();
+        await amend({ outcome: "passed", intent: "work" });
+        const until = watch.untilForDuration(key, Date.now());
+        // Background rebuilds rules before replying, so the navigation goes through.
+        await send({
+          type: "ignore",
+          match: hostScoped ? host : domain,
+          scope: hostScoped ? "host" : "domain",
+          domain,
+          until,
+        });
+        location.replace(originalUrl);
+      });
+    }
   }
 
   el.yes.addEventListener("click", async () => {
@@ -252,7 +273,7 @@ function showWall({ now, until }) {
   el.question.hidden = true;
   el.loopActions.hidden = true;
   el.listActions.hidden = true;
-  el.work.hidden = true;
+  el.ignoreRow.hidden = true;
   const midnight = nextLocalMidnight(now);
   if (until >= midnight) el.wallLine.textContent = "Back tomorrow.";
   else el.wallLine.textContent = `Session ends at ${formatClock(until)}.`;
