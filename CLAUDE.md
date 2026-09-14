@@ -18,8 +18,9 @@ Phase 1: the browser extension. Spec: `docs/HANDOFF-extension.md`. Work happens 
 ## Git workflow
 
 - **Pull at the start of every session.** `git pull --ff-only` on `main` before reading or changing anything, so work never starts from a stale tree.
-- **Every action starts with a branch.** Branch off up-to-date `main` before the first edit. Never commit directly to `main`.
-- **Commit and push after each action.** One finished unit of work — a module, a fix, a doc edit — is one commit, pushed to `origin` immediately. Don't let work sit uncommitted or unpushed.
+- **An action is one request and the work done for it.** The owner asked for something, it got done, it got presented back — that is one action. Not a file write, not a whole feature.
+- **Every action starts with a branch.** Branch off up-to-date `main` before the first edit. Follow-up actions that refine the same piece of work stay on that branch. Never commit directly to `main`.
+- **Commit and push at the end of every action, every time.** Before reporting back, the work is committed to the relevant branch and pushed to `origin`. No batching, no "I'll commit once it's finished." The owner works from more than one computer, and anything that exists only on this machine is work he cannot see.
 
 ## Environment facts
 
