@@ -14,7 +14,12 @@ Phase 1: the browser extension. Spec: `docs/HANDOFF-extension.md`. Work happens 
 - The extension talks to session state only through the `SessionSource` interface in `Extension/src/lib/session.js`. Phase 2 swaps the implementation for one backed by a native daemon.
 - Plain JS ES modules. No TypeScript, no bundler, no runtime dependencies. Tests use `node:test` only.
 - Pure modules under `Extension/src/lib/` (hosts, loop, schedule, rules, attempts helpers) must not import browser APIs, so they stay testable under Node.
-- Don't push to the remote unless asked. Commit in logical chunks on `main`.
+
+## Git workflow
+
+- **Pull at the start of every session.** `git pull --ff-only` on `main` before reading or changing anything, so work never starts from a stale tree.
+- **Every action starts with a branch.** Branch off up-to-date `main` before the first edit. Never commit directly to `main`.
+- **Commit and push after each action.** One finished unit of work — a module, a fix, a doc edit — is one commit, pushed to `origin` immediately. Don't let work sit uncommitted or unpushed.
 
 ## Environment facts
 
